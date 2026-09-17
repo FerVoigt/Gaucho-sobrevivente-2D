@@ -61,6 +61,10 @@ class SurvivorsAudioEngine {
       if (savedMusic !== null) {
         this.isMusicEnabled = savedMusic === 'true';
       }
+      const savedSfx = localStorage.getItem('vs_sfx_enabled');
+      if (savedSfx !== null) {
+        this.isSfxEnabled = savedSfx === 'true';
+      }
       const savedTheme = localStorage.getItem('vs_music_theme') as MusicThemeId;
       if (savedTheme && ['vanera', 'milonga', 'chote', 'retro_gothic'].includes(savedTheme)) {
         this.currentMusicTheme = savedTheme;
@@ -68,6 +72,32 @@ class SurvivorsAudioEngine {
     } catch {
       // Ignore storage errors
     }
+
+    // Auto-resume audio on first user touch/key in browser
+    if (typeof window !== 'undefined') {
+      const handleFirstInteraction = () => {
+        this.resumeContext();
+      };
+      window.addEventListener('pointerdown', handleFirstInteraction, { passive: true, once: false });
+      window.addEventListener('keydown', handleFirstInteraction, { passive: true, once: false });
+    }
+  }
+
+  public resumeContext() {
+    try {
+      this.init();
+      if (this.ctx && this.ctx.state === 'suspended') {
+        this.ctx.resume().then(() => {
+          if (this.isMusicEnabled && !this.isMuted && !this.musicInterval) {
+            this.startMusic();
+          }
+        }).catch(() => {});
+      } else if (this.ctx && this.ctx.state === 'running') {
+        if (this.isMusicEnabled && !this.isMuted && !this.musicInterval) {
+          this.startMusic();
+        }
+      }
+    } catch {}
   }
 
   private init() {
@@ -109,6 +139,23 @@ class SurvivorsAudioEngine {
 
   public getIsMuted(): boolean {
     return this.isMuted;
+  }
+
+  /** Controles de Efeitos Sonoros / Habilidades (SFX) */
+  public setSfxEnabled(enabled: boolean) {
+    this.isSfxEnabled = enabled;
+    try {
+      localStorage.setItem('vs_sfx_enabled', enabled.toString());
+    } catch {}
+  }
+
+  public toggleSfx(): boolean {
+    this.setSfxEnabled(!this.isSfxEnabled);
+    return this.isSfxEnabled;
+  }
+
+  public getIsSfxEnabled(): boolean {
+    return this.isSfxEnabled;
   }
 
   public toggleMusic(): boolean {
@@ -481,6 +528,41 @@ class SurvivorsAudioEngine {
 
     osc.start(now);
     osc.stop(now + 0.09);
+  }
+
+  /** Uivo lendário da Matilha Sagrada de Cuscos Caramelos dos Pampas (Especial) */
+  public playDogHowl() {
+    if (!this.canPlaySfx() || !this.ctx) return;
+    try {
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      const filter = this.ctx.createBiquadFilter();
+
+      osc.type = 'sawtooth';
+      // Expressive ascending howl into deep resonance
+      osc.frequency.setValueAtTime(220, now);
+      osc.frequency.linearRampToValueAtTime(380, now + 0.35);
+      osc.frequency.exponentialRampToValueAtTime(520, now + 0.7);
+      osc.frequency.exponentialRampToValueAtTime(330, now + 1.4);
+
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(600, now);
+      filter.frequency.linearRampToValueAtTime(1100, now + 0.6);
+      filter.frequency.exponentialRampToValueAtTime(450, now + 1.4);
+      filter.Q.setValueAtTime(4, now);
+
+      gain.gain.setValueAtTime(0.01, now);
+      gain.gain.linearRampToValueAtTime(0.28, now + 0.25);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.45);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 1.45);
+    } catch {}
   }
 
   /** Tiro estrondoso de Garrucha ou Trabuco Farrapo de Pederneira */
@@ -1072,11 +1154,24 @@ class SurvivorsAudioEngine {
   // ================= MÚSICA AMBIENTE DINÂMICA & RITMOS GAÚCHOS =================
 
   public startMusic() {
-    if (this.musicInterval) return;
     if (this.isMuted || !this.isMusicEnabled) return;
+
+    if (this.musicInterval) {
+      clearInterval(this.musicInterval);
+      this.musicInterval = null;
+    }
 
     this.init();
     if (!this.ctx) return;
+
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume().then(() => {
+        if (this.isMusicEnabled && !this.isMuted && !this.musicInterval) {
+          this.startMusic();
+        }
+      }).catch(() => {});
+      return;
+    }
 
     this.beatCount = 0;
 

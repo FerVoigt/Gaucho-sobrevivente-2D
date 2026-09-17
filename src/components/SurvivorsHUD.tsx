@@ -21,6 +21,9 @@ interface SurvivorsHUDProps {
   isMuted: boolean;
   isMusicEnabled: boolean;
   musicTheme?: MusicThemeId;
+  specialCooldown?: number;
+  specialMaxCooldown?: number;
+  onTriggerSpecial?: () => void;
   onToggleMute: () => void;
   onToggleMusic: () => void;
   onCycleMusicTheme?: () => void;
@@ -44,6 +47,9 @@ export const SurvivorsHUD: React.FC<SurvivorsHUDProps> = ({
   isMuted,
   isMusicEnabled,
   musicTheme = 'vanera',
+  specialCooldown = 0,
+  specialMaxCooldown = 20,
+  onTriggerSpecial,
   onToggleMute,
   onToggleMusic,
   onCycleMusicTheme,
@@ -267,7 +273,7 @@ export const SurvivorsHUD: React.FC<SurvivorsHUDProps> = ({
       </div>
 
       {/* ================= BOTTOM CONTROLS & STATUS HINT ================= */}
-      <div className="flex items-end justify-between w-full">
+      <div className="flex items-end justify-between w-full gap-2">
         {/* Movement Controls hint & Active Debuffs indicator */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-1.5 bg-slate-950/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-800 text-[11px] text-slate-400">
           <div className="flex items-center gap-1.5">
@@ -283,6 +289,37 @@ export const SurvivorsHUD: React.FC<SurvivorsHUDProps> = ({
             <span className="text-blue-300">🌀 Lentidão</span>
           </div>
         </div>
+
+        {/* Special Ability Button: Invocar Matilha de Cuscos Caramelos */}
+        {onTriggerSpecial && (
+          <div className="pointer-events-auto flex items-center justify-center">
+            <button
+              onClick={onTriggerSpecial}
+              disabled={specialCooldown > 0}
+              className={`relative group flex items-center gap-2 px-3.5 py-2 rounded-2xl border transition-all duration-200 shadow-xl cursor-pointer ${
+                specialCooldown <= 0
+                  ? 'bg-gradient-to-r from-amber-500/90 via-yellow-500/90 to-amber-600/90 hover:from-amber-400 hover:to-yellow-500 text-slate-950 font-bold border-amber-300 ring-2 ring-amber-400/50 shadow-amber-500/30 hover:scale-105 active:scale-95 animate-pulse'
+                  : 'bg-slate-950/85 backdrop-blur-md border-slate-800 text-slate-400 cursor-not-allowed opacity-85'
+              }`}
+              title="Invocar Matilha de Cuscos Caramelos (Tecla Espaço)"
+            >
+              <span className="text-lg">🐺</span>
+              <div className="flex flex-col items-start leading-tight">
+                <div className="flex items-center gap-1.5">
+                  <span className={`text-xs font-serif ${specialCooldown <= 0 ? 'text-slate-950 font-black' : 'text-slate-200 font-bold'}`}>
+                    Matilha Caramelo
+                  </span>
+                  <span className={`text-[9px] px-1 py-0.2 rounded font-mono ${specialCooldown <= 0 ? 'bg-slate-950/30 text-slate-900 font-bold' : 'bg-slate-800 text-slate-400'}`}>
+                    Espaço
+                  </span>
+                </div>
+                <span className={`text-[10px] font-mono ${specialCooldown <= 0 ? 'text-amber-950 font-extrabold' : 'text-amber-400'}`}>
+                  {specialCooldown <= 0 ? 'PRONTO PARA ATACAR!' : `Recarga: ${specialCooldown.toFixed(1)}s`}
+                </span>
+              </div>
+            </button>
+          </div>
+        )}
 
         {/* Stage & Character badge */}
         <div className="flex items-center gap-2">

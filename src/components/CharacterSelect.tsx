@@ -16,10 +16,12 @@ import {
   VolumeX,
   Music,
   Sliders,
+  Download,
 } from 'lucide-react';
 import { CharacterConfig } from '../types/survivors';
 import { WEAPON_DEFS } from '../game2d/constants';
 import { MUSIC_THEMES, MusicThemeId, survivorsAudio } from '../audio/survivorsAudio';
+import { ExportGameModal } from './ExportGameModal';
 
 interface CharacterSelectProps {
   characters: CharacterConfig[];
@@ -71,6 +73,7 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
   onStartGame,
 }) => {
   const [showAudioSettings, setShowAudioSettings] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
   const selectedChar = characters.find((c) => c.id === selectedId) || characters[0];
   const startingWeaponDef = WEAPON_DEFS[selectedChar.startingWeapon];
   const currentThemeObj = MUSIC_THEMES.find((t) => t.id === musicTheme) || MUSIC_THEMES[0];
@@ -194,6 +197,16 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
           >
             <ShoppingBag className="w-3.5 h-3.5" />
             <span>LOJA</span>
+          </button>
+
+          {/* Export Game (.ZIP / .EXE) Button */}
+          <button
+            onClick={() => setShowExportModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-slate-900/90 hover:bg-slate-800 text-amber-300 border border-amber-500/50 text-xs font-bold transition hover:scale-105 active:scale-95 cursor-pointer shadow-md"
+            title="Exportar jogo em .ZIP ou criar Executável (.EXE)"
+          >
+            <Download className="w-3.5 h-3.5 text-amber-400" />
+            <span>EXPORTAR (.ZIP / .EXE)</span>
           </button>
         </div>
       </div>
@@ -516,6 +529,9 @@ export const CharacterSelect: React.FC<CharacterSelectProps> = ({
         <span>Vampire Survivors 2D • Ação Roguelike em Tempo Real</span>
         <span>Controles: WASD / Setas | Auto-Ataque</span>
       </div>
+
+      {/* Export Game Modal */}
+      {showExportModal && <ExportGameModal onClose={() => setShowExportModal(false)} />}
     </div>
   );
 };

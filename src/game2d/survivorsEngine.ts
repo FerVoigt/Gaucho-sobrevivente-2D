@@ -27,6 +27,7 @@ import {
   WeaponState,
   WeatherState,
   GameThemePalette,
+  DpsSample,
 } from '../types/survivors';
 import { CHARACTERS, PASSIVE_DEFS, STAGES_CONFIG, WEAPON_DEFS, WEATHER_DEFS, getMonsterSpeciesDamageMultiplier } from './constants';
 import { RenderState, SurvivorsRenderer } from './renderer';
@@ -104,6 +105,15 @@ export class SurvivorsEngine {
   private freezeTimer: number = 0;
   private rosaryFlash: number = 0;
   private screenShake: number = 0;
+
+  // Performance & DPS tracking over run duration
+  public dpsHistory: DpsSample[] = [];
+  public dpsTimer: number = 0;
+  public currentSecondDamage: number = 0;
+
+  // Special Ability (Invocar Matilha de Cuscos Caramelos)
+  public specialCooldownTimer: number = 0;
+  public specialMaxCooldown: number = 20;
 
   // Environment & Procedural World
   public stage: StageConfig;
@@ -312,8 +322,34 @@ export class SurvivorsEngine {
     this.animFrameId = requestAnimationFrame(this.loop);
   };
 
+  public recordDamage(amount: number) {
+    if (amount <= 0) return;
+    this.currentSecondDamage += amount;
+  }
+
   private update(dt: number) {
     this.timeAlive += dt;
+
+    // Sample DPS graph every 1.0 second
+    this.dpsTimer += dt;
+    if (this.dpsTimer >= 1.0) {
+      this.dpsTimer -= 1.0;
+      const currentSecond = Math.floor(this.timeAlive);
+      const mins = Math.floor(currentSecond / 60);
+      const secs = currentSecond % 60;
+      const formattedTime = `${mins}:${secs.toString().padStart(2, '0')}`;
+      this.dpsHistory.push({
+        second: currentSecond,
+        dps: Math.round(this.currentSecondDamage),
+        formattedTime,
+      });
+      this.currentSecondDamage = 0;
+    }
+
+    // Special Cooldown Timer
+    if (this.specialCooldownTimer > 0) {
+      this.specialCooldownTimer = Math.max(0, this.specialCooldownTimer - dt);
+    }
 
     // HP Regeneration
     if (this.stats.hpRegen > 0 && this.stats.hp < this.stats.maxHp) {
@@ -519,6 +555,7 @@ export class SurvivorsEngine {
           const actualDamage = Math.round(finalDamage * (1 + speciesBonus));
 
           e.hp -= actualDamage;
+          this.recordDamage(actualDamage);
           e.hurtTimer = 0.08;
           weapon.totalDamageDealt += actualDamage;
           weapon.hitsCount++;
@@ -845,6 +882,7 @@ export class SurvivorsEngine {
           const actualDamage = Math.round(p.damage * (1 + speciesBonus));
 
           e.hp -= actualDamage;
+          this.recordDamage(actualDamage);
           e.hurtTimer = 0.08;
           p.hitEnemies.add(e.id);
           p.pierce--;
@@ -905,14 +943,31 @@ export class SurvivorsEngine {
     }
   }
 
-  // Update Companions (Cusco Caramelo & Matilha Sagrada)
+  // Update Animal Companions & Matilha with Solid Physics, No Teleporting, and 360 AoE Combat
   private updateCompanions(dt: number) {
     if (this.companions.length === 0) return;
 
+    // 1. Pack member lifespans and cleanup
+    for (let i = this.companions.length - 1; i >= 0; i--) {
+      const comp = this.companions[i];
+      if (comp.isPackMember && comp.packDuration !== undefined) {
+        comp.packDuration -= dt;
+        if (comp.packDuration <= 0) {
+          // Despawn pack dog with golden smoke particles
+          this.spawnHitParticles(comp.x, comp.y, '#f59e0b', true);
+          this.companions.splice(i, 1);
+        }
+      }
+    }
+
     const totalComps = this.companions.length;
+    if (totalComps === 0) return;
 
     for (let i = 0; i < totalComps; i++) {
       const comp = this.companions[i];
+      comp.vx = comp.vx || 0;
+      comp.vy = comp.vy || 0;
+
       if (comp.attackTimer && comp.attackTimer > 0) {
         comp.attackTimer -= dt;
       }
@@ -922,20 +977,13 @@ export class SurvivorsEngine {
 
       const distToPlayer = Math.hypot(comp.x - this.playerX, comp.y - this.playerY);
 
-      // Leash boundaries:
-      // Maximum distance from player before Cusco returns to master instead of wandering
-      const maxLeash = 240;
-      const isTooFar = distToPlayer > maxLeash;
-
-      // Verify if current target is still valid
+      // Verify or acquire living enemy target
       let currentTarget: Enemy | null = null;
-      if (comp.targetEnemyId !== null && comp.targetEnemyId !== undefined && !isTooFar) {
+      if (comp.targetEnemyId !== null && comp.targetEnemyId !== undefined) {
         currentTarget = this.enemies.find((e) => e.id === comp.targetEnemyId && e.hp > 0) || null;
         if (currentTarget) {
-          const targetDistFromPlayer = Math.hypot(currentTarget.x - this.playerX, currentTarget.y - this.playerY);
-          const targetDistFromComp = Math.hypot(currentTarget.x - comp.x, currentTarget.y - comp.y);
-          // If target is too far from player or comp, break target
-          if (targetDistFromPlayer > 280 || targetDistFromComp > 320 || (comp.targetTimer && comp.targetTimer <= 0)) {
+          const dComp = Math.hypot(currentTarget.x - comp.x, currentTarget.y - comp.y);
+          if (dComp > 340 || (comp.targetTimer && comp.targetTimer <= 0)) {
             currentTarget = null;
             comp.targetEnemyId = null;
           }
@@ -944,16 +992,13 @@ export class SurvivorsEngine {
         }
       }
 
-      // If no valid target and not too far from master, find the nearest living threat near player or Cusco
-      if (!currentTarget && !isTooFar) {
+      // If no current target, search for closest monster around Cusco or Player (threat radius)
+      if (!currentTarget) {
         let bestEnemy: Enemy | null = null;
-        let bestDist = 200; // Search within 200px of player/Cusco
+        let bestDist = comp.isPackMember ? 360 : 250;
 
         for (const e of this.enemies) {
           if (e.hp <= 0) continue;
-          const dPlayer = Math.hypot(e.x - this.playerX, e.y - this.playerY);
-          if (dPlayer > 220) continue; // Prioritize protecting master!
-
           const dComp = Math.hypot(e.x - comp.x, e.y - comp.y);
           if (dComp < bestDist) {
             bestDist = dComp;
@@ -964,48 +1009,57 @@ export class SurvivorsEngine {
         if (bestEnemy) {
           currentTarget = bestEnemy;
           comp.targetEnemyId = bestEnemy.id;
-          comp.targetTimer = 1.8; // Lock on to this target for up to 1.8s
+          comp.targetTimer = comp.isPackMember ? 2.5 : 1.6;
         }
       }
 
-      // 1. COMBAT BEHAVIOR: Pursue and attack target
+      // Movement & Combat steering
       if (currentTarget) {
-        const dEnemy = Math.hypot(currentTarget.x - comp.x, currentTarget.y - comp.y);
-        const biteRange = comp.radius + currentTarget.radius + 6;
-        const angle = Math.atan2(currentTarget.y - comp.y, currentTarget.x - comp.x);
+        const dx = currentTarget.x - comp.x;
+        const dy = currentTarget.y - comp.y;
+        const dEnemy = Math.hypot(dx, dy);
+        const biteRange = comp.radius + currentTarget.radius + 12;
+        const angle = Math.atan2(dy, dx);
 
         if (dEnemy > biteRange) {
-          // Running smoothly towards target enemy
+          // Sprint towards target
           comp.state = 'run';
-          comp.animFrame += dt;
+          comp.animFrame += dt * 10;
           comp.facingLeft = Math.cos(angle) < 0;
-          comp.x += Math.cos(angle) * comp.speed * dt;
-          comp.y += Math.sin(angle) * comp.speed * dt;
+
+          const speed = comp.speed * (comp.isPackMember ? 1.25 : 1.1);
+          const desiredVx = Math.cos(angle) * speed;
+          const desiredVy = Math.sin(angle) * speed;
+
+          comp.vx += (desiredVx - comp.vx) * 0.18;
+          comp.vy += (desiredVy - comp.vy) * 0.18;
         } else {
-          // Within bite range: attack!
+          // Within melee bite range: attack primary target and splash surrounding enemies!
           comp.state = 'bark';
           comp.facingLeft = Math.cos(angle) < 0;
 
           if (!comp.attackTimer || comp.attackTimer <= 0) {
             comp.attackTimer = comp.attackCooldown;
-            if (Math.random() < 0.5) {
+            if (Math.random() < 0.6) {
               survivorsAudio.playDogBite();
             } else {
               survivorsAudio.playDogBark();
             }
 
-            // Damage enemy with bestiary species multiplier
+            // Damage primary target with species bonus
             const speciesKey = currentTarget.spriteShape || currentTarget.type || 'skeleton';
             const speciesBonus = this.getSpeciesDamageMultiplier(speciesKey);
             const biteDamage = Math.round(comp.damage * (1 + speciesBonus));
+
             currentTarget.hp -= biteDamage;
             currentTarget.hurtTimer = 0.12;
+            this.recordDamage(biteDamage);
 
-            // Knockback
-            currentTarget.knockbackX = Math.cos(angle) * (comp.isSupreme ? 130 : 75);
-            currentTarget.knockbackY = Math.sin(angle) * (comp.isSupreme ? 130 : 75);
+            // Solid physical bite knockback
+            const knockForce = comp.isSupreme ? 140 : 90;
+            currentTarget.knockbackX = Math.cos(angle) * knockForce;
+            currentTarget.knockbackY = Math.sin(angle) * knockForce;
 
-            // Floating text & particles
             const textCol = comp.isSupreme ? '#fbbf24' : '#f59e0b';
             this.spawnFloatingText(`🐾 ${biteDamage}`, currentTarget.x, currentTarget.y - 14, textCol, comp.isSupreme ? 15 : 12, comp.isSupreme);
             this.spawnHitParticles(currentTarget.x, currentTarget.y, textCol);
@@ -1017,21 +1071,43 @@ export class SurvivorsEngine {
               cuscoWeapon.hitsCount++;
             }
 
+            // Splash damage to ALL other enemies surrounding Cusco (360 degrees, radius 60px)
+            const splashRadius = comp.radius + 40;
+            for (const otherEnemy of this.enemies) {
+              if (otherEnemy.hp <= 0 || otherEnemy.id === currentTarget.id) continue;
+              const dSplash = Math.hypot(otherEnemy.x - comp.x, otherEnemy.y - comp.y);
+              if (dSplash <= splashRadius + otherEnemy.radius) {
+                const splashDmg = Math.round(biteDamage * 0.5);
+                otherEnemy.hp -= splashDmg;
+                otherEnemy.hurtTimer = 0.1;
+                this.recordDamage(splashDmg);
+
+                const aPush = Math.atan2(otherEnemy.y - comp.y, otherEnemy.x - comp.x);
+                otherEnemy.knockbackX = Math.cos(aPush) * 70;
+                otherEnemy.knockbackY = Math.sin(aPush) * 70;
+
+                if (cuscoWeapon) {
+                  cuscoWeapon.totalDamageDealt += splashDmg;
+                  cuscoWeapon.hitsCount++;
+                }
+              }
+            }
+
             // Bark shockwave projectile
             this.projectiles.push({
               id: this.nextProjId++,
               weaponId: comp.isSupreme ? 'cusco_supremo' : 'cusco',
-              x: comp.x + Math.cos(angle) * 8,
-              y: comp.y + Math.sin(angle) * 8,
-              vx: 0,
-              vy: 0,
-              radius: comp.isSupreme ? 44 : 28,
-              damage: Math.round(biteDamage * 0.5),
+              x: comp.x + Math.cos(angle) * 10,
+              y: comp.y + Math.sin(angle) * 10,
+              vx: Math.cos(angle) * 80,
+              vy: Math.sin(angle) * 80,
+              radius: comp.isSupreme ? 48 : 32,
+              damage: Math.round(biteDamage * 0.45),
               isCrit: comp.isSupreme,
               pierce: 99,
               hitEnemies: new Set([currentTarget.id]),
-              duration: 0.22,
-              maxDuration: 0.22,
+              duration: 0.25,
+              maxDuration: 0.25,
               color: comp.isSupreme ? '#fde047' : '#f59e0b',
               extra: { isDogBark: true },
             });
@@ -1043,10 +1119,7 @@ export class SurvivorsEngine {
           }
         }
       } else {
-        // 2. COMPANION BEHAVIOR: Loyal follow beside/behind master (trotting smoothly, NO teleporting/oscillating)
-        comp.targetEnemyId = null;
-
-        // Stable relative positions behind/beside master
+        // Follow Master (Steering physics - strictly NO teleporting)
         let slotAngle: number;
         let slotDist = 45;
         const backAngle = this.facingLeft ? 0 : Math.PI;
@@ -1055,35 +1128,161 @@ export class SurvivorsEngine {
           slotAngle = backAngle + 0.35;
           slotDist = 45;
         } else {
-          const spread = Math.PI * 0.7;
+          const spread = Math.PI * 0.9;
           slotAngle = backAngle - spread / 2 + (spread / (totalComps - 1 || 1)) * i;
-          slotDist = 38 + (i % 2) * 14;
+          slotDist = 40 + (i % 3) * 18;
         }
 
         const targetX = this.playerX + Math.cos(slotAngle) * slotDist;
         const targetY = this.playerY + Math.sin(slotAngle) * slotDist;
-
         const distToSlot = Math.hypot(targetX - comp.x, targetY - comp.y);
 
-        if (distToSlot > 14) {
+        if (distToSlot > 16) {
           const moveAngle = Math.atan2(targetY - comp.y, targetX - comp.x);
           comp.facingLeft = Math.cos(moveAngle) < 0;
           comp.state = 'run';
-          comp.animFrame += dt;
+          comp.animFrame += dt * 8;
 
-          // Catch-up speed multiplier if left far behind master
-          const catchUpMult = distToPlayer > 380 ? 2.0 : (distToPlayer > 220 ? 1.4 : 1.0);
-          const step = Math.min(comp.speed * catchUpMult * dt, distToSlot);
+          // Catch-up acceleration if master runs fast
+          const catchUpMult = distToPlayer > 300 ? 2.5 : (distToPlayer > 180 ? 1.6 : 1.0);
+          const desiredVx = Math.cos(moveAngle) * comp.speed * catchUpMult;
+          const desiredVy = Math.sin(moveAngle) * comp.speed * catchUpMult;
 
-          comp.x += Math.cos(moveAngle) * step;
-          comp.y += Math.sin(moveAngle) * step;
+          comp.vx += (desiredVx - comp.vx) * 0.2;
+          comp.vy += (desiredVy - comp.vy) * 0.2;
         } else {
-          // Reached resting slot beside master
           comp.state = 'idle';
           comp.facingLeft = this.facingLeft;
+          comp.vx *= 0.6;
+          comp.vy *= 0.6;
         }
       }
+
+      // 2. SOLID COLLISION: Companion vs Enemies (Solid body push resolution)
+      for (const enemy of this.enemies) {
+        if (enemy.hp <= 0) continue;
+        const edx = enemy.x - comp.x;
+        const edy = enemy.y - comp.y;
+        const eDist = Math.hypot(edx, edy);
+        const minDist = comp.radius + enemy.radius;
+
+        if (eDist < minDist && eDist > 0.001) {
+          const overlap = minDist - eDist;
+          const nx = edx / eDist;
+          const ny = edy / eDist;
+
+          // Cusco is solid! Pushes enemy away, resists pushing back
+          enemy.x += nx * overlap * 0.7;
+          enemy.y += ny * overlap * 0.7;
+          comp.x -= nx * overlap * 0.3;
+          comp.y -= ny * overlap * 0.3;
+        }
+      }
+
+      // 3. SOLID COLLISION: Companion vs Companion (Flocking separation)
+      for (let j = i + 1; j < totalComps; j++) {
+        const otherComp = this.companions[j];
+        const cdx = otherComp.x - comp.x;
+        const cdy = otherComp.y - comp.y;
+        const cDist = Math.hypot(cdx, cdy);
+        const minSep = comp.radius + otherComp.radius + 6;
+
+        if (cDist < minSep && cDist > 0.001) {
+          const overlap = (minSep - cDist) * 0.5;
+          const nx = cdx / cDist;
+          const ny = cdy / cDist;
+
+          comp.x -= nx * overlap;
+          comp.y -= ny * overlap;
+          otherComp.x += nx * overlap;
+          otherComp.y += ny * overlap;
+        }
+      }
+
+      // Integrate continuous position from velocity
+      comp.x += comp.vx * dt;
+      comp.y += comp.vy * dt;
+
+      // Friction / Velocity damping
+      comp.vx *= 0.88;
+      comp.vy *= 0.88;
     }
+  }
+
+  // Trigger Special Ability: Invocar Matilha de Cuscos Caramelos dos Pampas
+  public triggerSpecialAbility(): boolean {
+    if (this.specialCooldownTimer > 0 || this.isGameOver || this.isPaused) {
+      return false;
+    }
+
+    // Cooldown reduction calculation
+    const cdr = Math.min(0.65, this.stats.cooldownReduction || 0);
+    this.specialMaxCooldown = Math.max(8, 20 * (1 - cdr));
+    this.specialCooldownTimer = this.specialMaxCooldown;
+
+    // Audio: Legendary Howl + Gaita flourish
+    survivorsAudio.playDogHowl();
+    survivorsAudio.playGaitaRiff();
+
+    // Screen Shake
+    this.screenShake = 16;
+
+    // Golden shockwave projectile from player
+    this.projectiles.push({
+      id: this.nextProjId++,
+      weaponId: 'cusco_supremo',
+      x: this.playerX,
+      y: this.playerY,
+      vx: 0,
+      vy: 0,
+      radius: 130 * this.stats.area,
+      damage: Math.round(95 * this.stats.might),
+      isCrit: true,
+      pierce: 999,
+      hitEnemies: new Set(),
+      duration: 0.4,
+      maxDuration: 0.4,
+      color: '#fbbf24',
+      extra: { isSonicBarkShockwave: true },
+    });
+
+    this.spawnFloatingText('🐺 MATILHA DOS PAMPAS!', this.playerX, this.playerY - 45, '#fbbf24', 20, true);
+
+    // Summon 7 loyal caramel dog companions forming the Matilha!
+    const packCount = 7;
+    const packDuration = 10; // 10 seconds of ferocious pack hunting frenzy
+
+    for (let i = 0; i < packCount; i++) {
+      const angle = (Math.PI * 2 / packCount) * i + (Math.random() - 0.5) * 0.3;
+      const spawnDist = 45 + Math.random() * 35;
+      const compId = this.nextCompanionId++;
+
+      this.companions.push({
+        id: compId,
+        type: 'cusco',
+        name: `Cusco Caramelo #${i + 1}`,
+        x: this.playerX + Math.cos(angle) * spawnDist,
+        y: this.playerY + Math.sin(angle) * spawnDist,
+        vx: Math.cos(angle) * 140,
+        vy: Math.sin(angle) * 140,
+        radius: 15 * this.stats.area,
+        damage: Math.round(75 * this.stats.might),
+        speed: 260 * this.stats.moveSpeed,
+        isSupreme: true,
+        facingLeft: Math.cos(angle) < 0,
+        animFrame: Math.random() * 5,
+        state: 'run',
+        attackCooldown: 0.3,
+        attackTimer: Math.random() * 0.15,
+        isPackMember: true,
+        packDuration,
+        packMaxDuration: packDuration,
+      });
+
+      this.spawnHitParticles(this.playerX + Math.cos(angle) * spawnDist, this.playerY + Math.sin(angle) * spawnDist, '#fbbf24', true);
+    }
+
+    return true;
   }
 
   // Update Area of Effect Zones (Holy Water puddles, etc.)
@@ -1116,6 +1315,7 @@ export class SurvivorsEngine {
             const actualDamage = Math.round(z.damage * (1 + speciesBonus));
 
             e.hp -= actualDamage;
+            this.recordDamage(actualDamage);
             e.hurtTimer = 0.08;
             this.spawnFloatingText(actualDamage.toString(), e.x, e.y - 8, speciesBonus > 0 ? '#38bdf8' : '#67e8f9', 12);
 
@@ -1501,6 +1701,7 @@ export class SurvivorsEngine {
               eff.tickTimer = 0;
               const burnDamage = Math.max(1, Math.round((eff.potency || 10) * (0.8 + this.stats.might * 0.3)));
               e.hp -= burnDamage;
+              this.recordDamage(burnDamage);
               e.hurtTimer = 0.08;
               this.spawnFloatingText(burnDamage.toString(), e.x + (Math.random() - 0.5) * 8, e.y - 10, '#f97316', 11);
               this.spawnHitParticles(e.x, e.y, '#ea580c');
@@ -2186,8 +2387,10 @@ export class SurvivorsEngine {
 
     for (const e of this.enemies) {
       if (e.tier !== 'boss') {
+        this.recordDamage(e.hp);
         e.hp = 0;
       } else {
+        this.recordDamage(800);
         e.hp -= 800;
       }
     }

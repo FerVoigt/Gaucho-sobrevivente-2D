@@ -256,6 +256,12 @@ export interface PassiveState {
   level: number;
 }
 
+export interface DpsSample {
+  second: number;
+  dps: number;
+  formattedTime: string;
+}
+
 export interface Companion {
   id: number;
   type: 'cusco' | 'cusco_supremo';
@@ -279,6 +285,9 @@ export interface Companion {
   isSupreme: boolean;
   targetEnemyId?: number | null;
   targetTimer?: number;
+  isPackMember?: boolean;
+  packDuration?: number;
+  packMaxDuration?: number;
 }
 
 export interface Enemy {
@@ -348,6 +357,7 @@ export interface Projectile {
     targetEnemyId?: number;
     splashRadius?: number;
     isDogBark?: boolean;
+    isSonicBarkShockwave?: boolean;
     trail?: { x: number; y: number; alpha: number }[];
   };
 }

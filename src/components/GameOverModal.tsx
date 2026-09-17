@@ -1,7 +1,16 @@
 import React from 'react';
-import { Skull, Coins, Clock, Trophy, RotateCcw, Home, Swords } from 'lucide-react';
-import { WeaponState } from '../types/survivors';
+import { Skull, Coins, Clock, Trophy, RotateCcw, Home, Swords, Activity, Zap } from 'lucide-react';
+import { WeaponState, DpsSample } from '../types/survivors';
 import { WEAPON_DEFS } from '../game2d/constants';
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+} from 'recharts';
 
 interface GameOverModalProps {
   victory: boolean;
@@ -11,6 +20,7 @@ interface GameOverModalProps {
   coinsEarned: number;
   characterName: string;
   weapons: WeaponState[];
+  dpsHistory?: DpsSample[];
   onRetry: () => void;
   onHome: () => void;
 }
@@ -23,16 +33,33 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
   coinsEarned,
   characterName,
   weapons,
+  dpsHistory = [],
   onRetry,
   onHome,
 }) => {
   const minutes = Math.floor(timeAlive / 60).toString().padStart(2, '0');
   const seconds = Math.floor(timeAlive % 60).toString().padStart(2, '0');
-  const totalDamage = weapons.reduce((acc, w) => acc + w.totalDamageDealt, 0) || 1;
+  const totalDamage = weapons.reduce((acc, w) => acc + w.totalDamageDealt, 0) || 0;
+  const avgDps = Math.round(totalDamage / Math.max(1, timeAlive));
+
+  // Build or format DPS chart points
+  let chartData: DpsSample[] = [];
+  if (dpsHistory && dpsHistory.length > 1) {
+    chartData = dpsHistory;
+  } else {
+    // If run was very short or no history accumulated, provide initial baseline curve
+    const duration = Math.max(1, Math.floor(timeAlive));
+    chartData = [
+      { second: 0, dps: 0, formattedTime: '0:00' },
+      { second: duration, dps: avgDps, formattedTime: `${minutes}:${seconds}` },
+    ];
+  }
+
+  const peakDps = chartData.reduce((max, pt) => Math.max(max, pt.dps), avgDps);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4 animate-in fade-in duration-300">
-      <div className="w-full max-w-xl bg-slate-950/95 border-2 border-slate-800 rounded-3xl p-6 md:p-8 shadow-2xl flex flex-col items-center gap-6 text-slate-200">
+      <div className="w-full max-w-xl bg-slate-950/95 border-2 border-slate-800 rounded-3xl p-6 md:p-7 shadow-2xl flex flex-col items-center gap-5 text-slate-200 max-h-[92vh] overflow-y-auto">
         {/* Title */}
         <div className="flex flex-col items-center text-center">
           <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl mb-2 shadow-xl border border-slate-700 bg-slate-900">
@@ -40,7 +67,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
           </div>
 
           <h1
-            className={`font-serif font-black text-3xl md:text-4xl tracking-wider ${
+            className={`font-serif font-black text-2xl md:text-3xl tracking-wider ${
               victory
                 ? 'text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500'
                 : 'text-rose-500 drop-shadow-[0_0_12px_rgba(244,63,94,0.6)]'
@@ -56,31 +83,106 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
         </div>
 
         {/* Stats Summary Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 w-full">
-          <div className="bg-slate-900/90 p-3 rounded-2xl border border-slate-800 flex flex-col items-center text-center">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 w-full">
+          <div className="bg-slate-900/90 p-2.5 rounded-2xl border border-slate-800 flex flex-col items-center text-center">
             <Clock className="w-4 h-4 text-cyan-400 mb-1" />
             <span className="text-[10px] uppercase text-slate-400 font-bold">Tempo</span>
-            <strong className="text-base font-serif text-cyan-300">
+            <strong className="text-sm font-serif text-cyan-300">
               {minutes}:{seconds}
             </strong>
           </div>
 
-          <div className="bg-slate-900/90 p-3 rounded-2xl border border-slate-800 flex flex-col items-center text-center">
+          <div className="bg-slate-900/90 p-2.5 rounded-2xl border border-slate-800 flex flex-col items-center text-center">
             <Trophy className="w-4 h-4 text-amber-400 mb-1" />
             <span className="text-[10px] uppercase text-slate-400 font-bold">Nível</span>
-            <strong className="text-base font-serif text-amber-300">{levelReached}</strong>
+            <strong className="text-sm font-serif text-amber-300">{levelReached}</strong>
           </div>
 
-          <div className="bg-slate-900/90 p-3 rounded-2xl border border-slate-800 flex flex-col items-center text-center">
+          <div className="bg-slate-900/90 p-2.5 rounded-2xl border border-slate-800 flex flex-col items-center text-center">
             <Skull className="w-4 h-4 text-rose-400 mb-1" />
             <span className="text-[10px] uppercase text-slate-400 font-bold">Inimigos</span>
-            <strong className="text-base font-serif text-rose-300">{killsCount}</strong>
+            <strong className="text-sm font-serif text-rose-300">{killsCount}</strong>
           </div>
 
-          <div className="bg-slate-900/90 p-3 rounded-2xl border border-slate-800 flex flex-col items-center text-center">
+          <div className="bg-slate-900/90 p-2.5 rounded-2xl border border-slate-800 flex flex-col items-center text-center">
             <Coins className="w-4 h-4 text-yellow-400 mb-1" />
             <span className="text-[10px] uppercase text-slate-400 font-bold">Ouro</span>
-            <strong className="text-base font-serif text-yellow-300">{coinsEarned}</strong>
+            <strong className="text-sm font-serif text-yellow-300">{coinsEarned}</strong>
+          </div>
+        </div>
+
+        {/* DPS Performance Line Chart */}
+        <div className="w-full flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs uppercase font-bold text-slate-300 flex items-center gap-1.5">
+              <Activity className="w-3.5 h-3.5 text-amber-400" />
+              <span>Desempenho de DPS (Dano por Segundo)</span>
+            </span>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-300 font-mono flex items-center gap-1">
+                <Zap className="w-3 h-3 text-amber-400" />
+                <span>Pico: {peakDps.toLocaleString()}/s</span>
+              </span>
+              <span className="text-[10px] px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 font-mono">
+                Média: {avgDps.toLocaleString()}/s
+              </span>
+            </div>
+          </div>
+
+          <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-3 pt-4 w-full">
+            <div className="w-full h-36">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="dpsFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.4} />
+                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.35} />
+                  <XAxis
+                    dataKey="formattedTime"
+                    stroke="#94a3b8"
+                    tick={{ fontSize: 9 }}
+                    tickLine={false}
+                    interval="preserveStartEnd"
+                  />
+                  <YAxis
+                    stroke="#94a3b8"
+                    tick={{ fontSize: 9 }}
+                    tickLine={false}
+                    tickFormatter={(val) => (val >= 1000 ? `${(val / 1000).toFixed(1)}k` : val)}
+                  />
+                  <Tooltip
+                    content={({ active, payload }) => {
+                      if (active && payload && payload.length) {
+                        const data = payload[0].payload as DpsSample;
+                        return (
+                          <div className="bg-slate-950/95 border border-amber-500/40 px-2.5 py-1.5 rounded-lg shadow-xl text-[11px] flex flex-col gap-0.5">
+                            <span className="text-slate-400 font-mono">⏱️ Tempo: {data.formattedTime}</span>
+                            <span className="text-amber-300 font-bold font-mono flex items-center gap-1">
+                              <Zap className="w-3 h-3 text-amber-400" />
+                              {data.dps.toLocaleString()} DPS
+                            </span>
+                          </div>
+                        );
+                      }
+                      return null;
+                    }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="dps"
+                    stroke="#f59e0b"
+                    strokeWidth={2}
+                    fillOpacity={1}
+                    fill="url(#dpsFill)"
+                    activeDot={{ r: 4, fill: '#fbbf24', stroke: '#fff', strokeWidth: 1 }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
 
@@ -91,10 +193,10 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
             <span>Dano por Arma</span>
           </span>
 
-          <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-3 flex flex-col gap-2 max-h-40 overflow-y-auto">
+          <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-3 flex flex-col gap-2 max-h-36 overflow-y-auto">
             {weapons.map((w) => {
               const def = WEAPON_DEFS[w.id];
-              const pct = Math.round((w.totalDamageDealt / totalDamage) * 100);
+              const pct = Math.round((w.totalDamageDealt / (totalDamage || 1)) * 100);
 
               return (
                 <div key={w.id} className="flex items-center justify-between text-xs gap-3">
@@ -113,7 +215,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
         </div>
 
         {/* Actions */}
-        <div className="flex items-center justify-center gap-3 w-full pt-2">
+        <div className="flex items-center justify-center gap-3 w-full pt-1">
           <button
             onClick={onHome}
             className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 font-bold text-xs transition cursor-pointer"

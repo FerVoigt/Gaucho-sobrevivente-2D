@@ -164,6 +164,8 @@ export default function App() {
     stats: PlayerStats;
     weapons: WeaponState[];
     passives: PassiveState[];
+    specialCooldown: number;
+    specialMaxCooldown: number;
   }>({
     timeAlive: 0,
     currentLevel: 1,
@@ -192,6 +194,8 @@ export default function App() {
     },
     weapons: [],
     passives: [],
+    specialCooldown: 0,
+    specialMaxCooldown: 20,
   });
 
   // Save persistent data
@@ -423,6 +427,8 @@ export default function App() {
         stats: { ...eng.stats },
         weapons: [...eng.activeWeapons],
         passives: [...eng.activePassives],
+        specialCooldown: eng.specialCooldownTimer,
+        specialMaxCooldown: eng.specialMaxCooldown,
       });
 
       if (eng.weather) {
@@ -456,12 +462,24 @@ export default function App() {
     }
   }, [screen, hudState.timeAlive]);
 
-  // Global key shortcuts: ESC/P for pause, M for music, S for mute
+  // Trigger Cusco's Special Ability: Matilha de Cuscos Caramelos
+  const handleTriggerSpecial = () => {
+    if (engineRef.current) {
+      engineRef.current.triggerSpecialAbility();
+    }
+  };
+
+  // Global key shortcuts: ESC/P for pause, Space/E for Special Ability, M for music, S for mute
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' || e.key.toLowerCase() === 'p') {
         if (screen === 'playing' && !levelUpOptions && !chestReward && !gameOverResult.isOver) {
           handleTogglePause();
+        }
+      } else if (e.code === 'Space' || e.key === ' ' || e.key.toLowerCase() === 'e') {
+        if (screen === 'playing' && !levelUpOptions && !chestReward && !gameOverResult.isOver && !isPaused) {
+          e.preventDefault();
+          handleTriggerSpecial();
         }
       } else if (e.key.toLowerCase() === 'm') {
         handleToggleMusic();
@@ -705,6 +723,9 @@ export default function App() {
               isMuted={isMuted}
               isMusicEnabled={isMusicEnabled}
               musicTheme={musicTheme}
+              specialCooldown={hudState.specialCooldown}
+              specialMaxCooldown={hudState.specialMaxCooldown}
+              onTriggerSpecial={handleTriggerSpecial}
               onToggleMute={handleToggleMute}
               onToggleMusic={handleToggleMusic}
               onCycleMusicTheme={handleCycleMusicTheme}
@@ -766,6 +787,7 @@ export default function App() {
               coinsEarned={hudState.coinsEarned}
               characterName={selectedChar.name}
               weapons={hudState.weapons}
+              dpsHistory={engineRef.current?.dpsHistory || []}
               onRetry={handleStartGame}
               onHome={handleQuitToMenu}
             />
