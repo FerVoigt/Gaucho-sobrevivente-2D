@@ -1,0 +1,6 @@
+{
+  "name": "Sobrevivente Gaúcho",
+  "description": "Roguelike 2D gaúcho de sobrevivência às assombrações da noite no pampa, com tela de carregamento atmosférica com folclore e clima, fusão de habilidades supremas, modo frenesi de ouro e sistema de partículas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
